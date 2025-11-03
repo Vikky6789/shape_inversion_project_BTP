@@ -1,0 +1,5 @@
+================================================================================
+ANALYSIS REPORT FOR CATEGORY: SOFA
+================================================================================
+
+ERROR: Results directory NOT found for 'sofa'. Skipping analysis.

@@ -1,0 +1,43 @@
+================================================================================
+ANALYSIS REPORT FOR CATEGORY: CAR
+================================================================================
+
+--- Section 1: Quantitative Summary (Entire Test Set) ---
+Average Completion CD (vs. Ground Truth): 0.0118 (Lower is better)
+Average Fidelity UCD (from Partial Input): 0.000179 (Lower is better)
+
+--- Section 2: Qualitative Analysis of 5 Random Samples ---
+
+--- Sample 1: 770 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: AVERAGE. (CD: 0.0141, typical for this category)
+- Fidelity to Partial Input: GOOD. The original visible geometry is well-preserved with minor deviations. (UCD: 0.000278, typical for this category)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/car/car_sample_1.png
+
+--- Sample 2: 819 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: POOR. (CD: 0.0271, worse than category average of 0.0118)
+- Fidelity to Partial Input: POOR. The original visible geometry was significantly distorted during completion. (UCD: 0.000393, worse than category average of 0.000179)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/car/car_sample_2.png
+
+--- Sample 3: 857 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0014, significantly better than category average of 0.0118)
+- Fidelity to Partial Input: EXCELLENT. The original visible geometry is almost perfectly preserved. (UCD: 0.000070, significantly better than category average of 0.000179)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/car/car_sample_3.png
+
+--- Sample 4: 853 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0007, significantly better than category average of 0.0118)
+- Fidelity to Partial Input: GOOD. The original visible geometry is well-preserved with minor deviations. (UCD: 0.000103, typical for this category)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/car/car_sample_4.png
+
+--- Sample 5: 861 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0087, significantly better than category average of 0.0118)
+- Fidelity to Partial Input: GOOD. The original visible geometry is well-preserved with minor deviations. (UCD: 0.000224, typical for this category)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/car/car_sample_5.png
+
+--- Section 3: Average Qualitative Response ---
+The overall completion quality for this category, based on the samples, is predominantly EXCELLENT.
+The model's fidelity to the partial input is generally GOOD.

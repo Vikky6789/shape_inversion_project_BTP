@@ -1,0 +1,19 @@
+# Ignore large data, model, and result folders
+/data/
+/pretrained_models/
+/saved_results/
+/our_data.zip
+
+# Ignore Python caches and compiled files
+__pycache__/
+*.pyc
+*.so
+/external/**/build/
+.ipynb_checkpoints/
+
+# Ignore log files
+/logs/
+*.log
+
+# Ignore general system files
+.DS_Store

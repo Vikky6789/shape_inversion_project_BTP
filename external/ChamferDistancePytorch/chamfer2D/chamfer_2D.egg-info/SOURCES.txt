@@ -1,0 +1,7 @@
+setup.py
+/content/shape-inversion/external/ChamferDistancePytorch/chamfer2D/chamfer2D.cu
+/content/shape-inversion/external/ChamferDistancePytorch/chamfer2D/chamfer_cuda.cpp
+chamfer_2D.egg-info/PKG-INFO
+chamfer_2D.egg-info/SOURCES.txt
+chamfer_2D.egg-info/dependency_links.txt
+chamfer_2D.egg-info/top_level.txt

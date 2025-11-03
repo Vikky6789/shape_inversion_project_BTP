@@ -1,0 +1,43 @@
+================================================================================
+ANALYSIS REPORT FOR CATEGORY: TABLE
+================================================================================
+
+--- Section 1: Quantitative Summary (Entire Test Set) ---
+Average Completion CD (vs. Ground Truth): 0.0049 (Lower is better)
+Average Fidelity UCD (from Partial Input): 0.000162 (Lower is better)
+
+--- Section 2: Qualitative Analysis of 5 Random Samples ---
+
+--- Sample 1: 176 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0013, significantly better than category average of 0.0049)
+- Fidelity to Partial Input: GOOD. The original visible geometry is well-preserved with minor deviations. (UCD: 0.000179, typical for this category)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/table/table_sample_1.png
+
+--- Sample 2: 194 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0030, significantly better than category average of 0.0049)
+- Fidelity to Partial Input: POOR. The original visible geometry was significantly distorted during completion. (UCD: 0.000431, worse than category average of 0.000162)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/table/table_sample_2.png
+
+--- Sample 3: 208 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0006, significantly better than category average of 0.0049)
+- Fidelity to Partial Input: GOOD. The original visible geometry is well-preserved with minor deviations. (UCD: 0.000106, typical for this category)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/table/table_sample_3.png
+
+--- Sample 4: 159 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0008, significantly better than category average of 0.0049)
+- Fidelity to Partial Input: EXCELLENT. The original visible geometry is almost perfectly preserved. (UCD: 0.000064, significantly better than category average of 0.000162)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/table/table_sample_4.png
+
+--- Sample 5: 249 ---
+AUTOMATED QUALITATIVE VERDICT:
+- Alignment with Ground Truth: EXCELLENT. (CD: 0.0004, significantly better than category average of 0.0049)
+- Fidelity to Partial Input: EXCELLENT. The original visible geometry is almost perfectly preserved. (UCD: 0.000061, significantly better than category average of 0.000162)
+  - Visual evidence saved to: /content/drive/MyDrive/shape-inversion/analysis_reports/table/table_sample_5.png
+
+--- Section 3: Average Qualitative Response ---
+The overall completion quality for this category, based on the samples, is predominantly EXCELLENT.
+The model's fidelity to the partial input is generally GOOD.
