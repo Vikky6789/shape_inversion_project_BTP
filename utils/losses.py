@@ -4,6 +4,8 @@ import emd
 # This now uses the correct path and function names from your project's 'external' folder.
 from external.ChamferDistancePytorch.chamfer_python import distChamfer, distChamfer_raw
 
+#SANKET'S OWN LOSSES.PY FILE TO SELECTIVELY CHOOSE NECESSARY LOSS AND THEN GET THE COMPLETION RESULT
+
 def calc_cd(pcd1, pcd2):
     """
     Calculates the Chamfer Distance using the project's existing implementation.
