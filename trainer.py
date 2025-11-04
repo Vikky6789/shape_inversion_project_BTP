@@ -1,9 +1,22 @@
+# ==========================================================
+# trainer.py (Kaggle-Compatible Version)
+# ==========================================================
+
 import sys
-sys.path.append('/content/drive/MyDrive/shape-inversion')
 import os
 import time
 from collections import OrderedDict
 import random
+
+# -------------------------
+# Fix import paths for Kaggle
+# -------------------------
+repo_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(repo_root)
+sys.path.append(os.path.join(repo_root, "data"))
+sys.path.append(os.path.join(repo_root, "utils"))
+sys.path.append(os.path.join(repo_root, "model"))
+sys.path.append(os.path.join(repo_root, "external"))
 
 import torch
 import torch.distributed as dist
@@ -11,6 +24,9 @@ import torch.optim
 import torchvision.utils as vutils
 from torch.utils.data import DataLoader, DistributedSampler
 
+# -------------------------
+# Project Imports
+# -------------------------
 from data.CRN_dataset import CRNShapeNet
 from data.ply_dataset import PlyDataset
 from arguments import Arguments
@@ -24,9 +40,15 @@ from shape_inversion import ShapeInversion
 from model.treegan_network import Generator, Discriminator
 from external.ChamferDistancePytorch.chamfer_python import distChamfer, distChamfer_raw
 
+
+# ==========================================================
+# Trainer Class
+# ==========================================================
 class Trainer(object):
     def __init__(self, args):
         self.args = args
+
+        # Setup distributed params
         if self.args.dist:
             self.rank = dist.get_rank()
             self.world_size = dist.get_world_size()
@@ -39,26 +61,25 @@ class Trainer(object):
         log_pathname = './logs/' + save_inversion_dirname[-1] + '.txt'
         args.log_pathname = log_pathname
 
-        # -------------------------
-        # Ensure checkpoint attribute exists for compatibility:
-        # if shape_inversion.py expects args.checkpoint, map from existing ckpt_load arg
-        # -------------------------
+        # Ensure checkpoint attribute exists
         if not hasattr(self.args, 'checkpoint'):
-            # prefer ckpt_load if present, otherwise None
             self.args.checkpoint = getattr(self.args, 'ckpt_load', None)
 
-        # Ensure args.device is set (normally set in main before Trainer instantiation)
+        # Ensure args.device exists
         if not hasattr(self.args, 'device'):
             self.args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # create model (ShapeInversion will use args.checkpoint or args.ckpt_load internally)
+        # -------------------------
+        # Model creation
+        # -------------------------
         self.model = ShapeInversion(self.args)
         if self.inversion_mode == 'morphing':
             self.model2 = ShapeInversion(self.args)
             self.model_interp = ShapeInversion(self.args)
 
+        # -------------------------
         # Dataset loader
-        # Fix: Use valid dataset condition
+        # -------------------------
         if self.args.dataset == 'ply':
             dataset = PlyDataset(self.args)
         else:
@@ -75,6 +96,9 @@ class Trainer(object):
                 dataset, batch_size=1, shuffle=False, sampler=sampler,
                 num_workers=1, pin_memory=False)
 
+    # ==========================================================
+    # Main run entry
+    # ==========================================================
     def run(self):
         if self.inversion_mode in ['reconstruction', 'completion', 'jittering', 'simulate_pfnet']:
             self.train()
@@ -85,9 +109,13 @@ class Trainer(object):
         else:
             raise NotImplementedError
 
+    # ==========================================================
+    # Training Modes
+    # ==========================================================
     def train(self):
         for i, data in enumerate(self.dataloader):
             tic = time.time()
+
             # Dataset check
             if self.args.dataset == 'ply':
                 partial, index = data
@@ -101,24 +129,26 @@ class Trainer(object):
                 choice = [torch.Tensor([-1, 0, 0]), torch.Tensor([-1, 1, 0])]
                 chosen = random.sample(choice, 1)[0]
                 dist_val = torch.norm(gt.add(-chosen.to(self.args.device)), dim=1)
-                top_dist, idx = torch.topk(dist_val, k=2048-n_removal)
+                top_dist, idx = torch.topk(dist_val, k=2048 - n_removal)
                 partial = gt[idx]
 
             partial = partial.squeeze(0).to(self.args.device)
             self.model.reset_G(pcd_id=index.item())
 
-            # set target and complete shape
-            if partial is None or self.args.inversion_mode in ['reconstruction', 'jittering', 'morphing', 'ball_hole', 'knn_hole']:
+            if partial is None or self.args.inversion_mode in [
+                'reconstruction', 'jittering', 'morphing', 'ball_hole', 'knn_hole'
+            ]:
                 self.model.set_target(gt=gt)
             else:
                 self.model.set_target(gt=gt, partial=partial)
 
             self.model.select_z(select_y=False)
             self.model.run()
+
             toc = time.time()
             if self.rank == 0:
-                print(i, 'out of', len(self.dataloader), 'done in', int(toc-tic), 's')
-            
+                print(i, 'out of', len(self.dataloader), 'done in', int(toc - tic), 's')
+
             if self.args.visualize:
                 pcd_list = self.model.checkpoint_pcd
                 flag_list = self.model.checkpoint_flags
@@ -129,7 +159,8 @@ class Trainer(object):
                 else:
                     draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(3, 4))
 
-        print('<<<<<<<<<<<<<<<<<<<<<<<<<<<<,rank', self.rank, 'completed>>>>>>>>>>>>>>>>>>>>>>')
+        print('<<<<<<<<<<<< rank', self.rank, 'completed >>>>>>>>>>>>>>')
+
 
     def train_diversity(self):
         for i, data in enumerate(self.dataloader):
@@ -164,7 +195,7 @@ class Trainer(object):
                 print(index.item(), 'partial shape', partial.shape)
             else:
                 partial = partial.squeeze(0).to(self.args.device)
-            
+
             self.model.reset_G(pcd_id=index.item())
             self.model.set_target(gt=gt, partial=partial)
             self.model.diversity_search()
@@ -192,8 +223,9 @@ class Trainer(object):
                 draw_any_set(flag_ls, pcd_ls, output_dir, output_stem, layout=layout)
             if self.rank == 0:
                 toc = time.time()
-                print(i, 'out of', len(self.dataloader), 'done in', int(toc-tic), 's')
+                print(i, 'out of', len(self.dataloader), 'done in', int(toc - tic), 's')
             print(f"{i} / {len(self.dataloader)} completed")
+
 
     def train_morphing(self):
         for i, data in enumerate(self.dataloader):
@@ -201,7 +233,7 @@ class Trainer(object):
             gt, partial, index = data
             gt = gt.to(self.args.device)
 
-            # Reconstruction on both pcs, assuming gt is a batch of two shapes
+            # Reconstruction on both pcs
             self.model.reset_G(pcd_id=index[0].item())
             self.model.set_target(gt=gt[0])
             self.model.select_z(select_y=False)
@@ -246,16 +278,23 @@ class Trainer(object):
 
             if self.rank == 0:
                 toc = time.time()
-                print(i, 'out of', len(self.dataloader), 'done in', int(toc-tic), 's')
+                print(i, 'out of', len(self.dataloader), 'done in', int(toc - tic), 's')
 
+
+# ==========================================================
+# Main Entry Point
+# ==========================================================
 if __name__ == "__main__":
     args = Arguments(stage='inversion').parser().parse_args()
     args.device = torch.device('cuda:' + str(args.gpu) if args.gpu != -1 and torch.cuda.is_available() else 'cpu')
+
     if not os.path.isdir('./logs/'):
         os.mkdir('./logs/')
     if not os.path.isdir('./saved_results'):
         os.mkdir('./saved_results')
+
     if args.dist:
         dist_init(args.port)
+
     trainer = Trainer(args)
     trainer.run()
