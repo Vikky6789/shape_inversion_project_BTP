@@ -40,12 +40,12 @@ class Arguments:
         self._parser.add_argument('--split', type=str, default='test', help='NOTE: train if pretrain and generate_fpd_stats; test otherwise')
 
         # Architecture matching checkpoint
-        self._parser.add_argument('--DEGREE', type=int, default=[1, 1, 2, 4, 8, 16, 32], nargs='+', help='Upsample degrees for generator.')
+        self._parser.add_argument('--DEGREE', type=int, default=[1,  2,   2,   2,   2,   2,   64], nargs='+', help='Upsample degrees for generator.')
         self._parser.add_argument('--G_FEAT', type=int, default=[96, 256, 256, 256, 128, 128, 128, 3], nargs='+', help='Features for generator.')
-        self._parser.add_argument('--D_FEAT', type=int, default=[3, 64, 128, 256, 256, 512], nargs='+', help='Features for discriminator.')
-
-        # Support for TreeGCN loop term (must be 1 to match checkpoint)
-        self._parser.add_argument('--support', type=int, default=1, help='Support value for TreeGCN loop term.')
+        self._parser.add_argument('--D_FEAT', type=int, default=[3, 64,  128, 256, 256, 512], nargs='+', help='Features for discriminator.')
+        
+        # Support for TreeGCN loop term (must be 10 to match checkpoint)
+        self._parser.add_argument('--support', type=int, default=10, help='Support value for TreeGCN loop term.')
 
         self._parser.add_argument('--loop_non_linear', default=False, type=lambda x: (str(x).lower() == 'true'))
 
@@ -109,6 +109,7 @@ class Arguments:
         self._parser.add_argument('--inversion_mode', type=str, default='completion',
                                   help='reconstruction|completion|jittering|morphing|diversity|ball_hole_diversity|simulate_pfnet')
         self._parser.add_argument('--loss_func', type=str, default='cd', help='loss function to use: cd, emd, or dcd')
+        self._parser.add_argument('--mapping_metric', type=str, default='cd', help='metric for initial shape mapping: cd, emd, or dcd')
 
         ### diversity
         self._parser.add_argument('--n_z_candidates', type=int, default=50, help='Number of z candidates prior to FPS')
@@ -119,7 +120,7 @@ class Arguments:
         self._parser.add_argument('--select_num', type=int, default=500, help='Number of point clouds pool to select from')
         self._parser.add_argument('--sample_std', type=float, default=1.0, help='Std dev for gaussian sampling')
 
-        self._parser.add_argument('--iterations', type=int, default=[30, 30, 30, 30], nargs='+',
+        self._parser.add_argument('--iterations', type=int, default=[200, 200, 200, 200], nargs='+',
                                   help='Each sub-stage consists of 30 iterations for bulk structures, 200 for thin structures')
 
         self._parser.add_argument('--G_lrs', type=float, default=[2e-7, 1e-6, 1e-6, 2e-7], nargs='+', help='Learning rate steps of Generator')
@@ -138,6 +139,9 @@ class Arguments:
         self._parser.add_argument('--dist', action='store_true', default=False, help='Train with distributed implementation')
         self._parser.add_argument('--port', type=str, default='12345', help='Port id for distributed training')
         self._parser.add_argument('--visualize', action='store_true', default=False, help='Enable visualization')
+        
+        #saving intermediate steps
+        self._parser.add_argument('--save_interval', type=int, default=10,help='Save intermediate reconstructions every N iterations')
 
     def add_eval_completion_args(self):
         self._parser.add_argument('--eval_with_GT', type=str2bool, default=False, help='Eval with ground truth on real scans')

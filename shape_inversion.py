@@ -12,6 +12,7 @@ from torch.autograd import Variable
 from model.treegan_network import Generator, Discriminator
 
 from utils.common_utils import *
+from utils.losses import calc_cd, calc_emd, calc_dcd, calc_uniform_chamfer_loss_tensor, calc_infocd, calc_hypercd
 from loss import *
 from evaluation.pointnet import *
 import time
@@ -204,6 +205,8 @@ class ShapeInversion(object):
             self.w_D_loss = args.w_D_loss * len(args.G_lrs)
         else:
             self.w_D_loss = args.w_D_loss
+        #storing initial shape choosen
+        self.initial_shape_for_saving = None
 
     def reset_G(self, pcd_id=None):
         """
@@ -272,20 +275,63 @@ class ShapeInversion(object):
                 ### compute losses
                 ftr_loss = self.criterion(self.ftr_net, x_map, self.target)
 
-                dist1, dist2, _, _ = distChamfer(x_map, self.target)
-                cd_loss = dist1.mean() + dist2.mean()
+                # dist1, dist2, _, _ = distChamfer(x_map, self.target)
+                # cd_loss = dist1.mean() + dist2.mean()
+                # # optional early stopping
+                # if self.args.early_stopping:
+                #     if cd_loss.item() < self.args.stop_cd:
+                #         break
+
+                # # nll corresponds to a negative log-likelihood loss
+                # nll = self.z**2 / 2
+                # nll = nll.mean()
+
+                # ### loss
+                # loss = ftr_loss * self.w_D_loss[stage] + nll * self.args.w_nll \
+                #         + cd_loss * 1
+
+                # --- Compute geometry loss based on selected loss_func ---
+                if self.args.loss_func.lower() == "cd":
+                  # dist1, dist2, _, _ = distChamfer(x_map, self.target)
+                  # geom_loss = dist1.mean() + dist2.mean()
+                   geom_loss = calc_cd(x_map, self.target)
+                elif self.args.loss_func.lower() == "emd":
+                  # from external.emd.emd_module import emdModule
+                  # emd = emdModule()
+                  # dist, _ = emd(x_map, self.target, 0.005, 300)
+                  # geom_loss = torch.sqrt(dist).mean()
+                   geom_loss = calc_emd(x_map, self.target, eps=0.005, iterations=300)
+                elif self.args.loss_func.lower() == "dcd":
+                  geom_loss = calc_dcd(x_map, self.target, alpha=40)
+                
+                # ADD INFOCD/HYPERCD HERE
+                elif self.args.loss_func.lower() == "uniformcd":
+                   geom_loss = calc_uniform_chamfer_loss_tensor(x_map, self.target)
+                   
+                elif self.args.loss_func.lower() == "infocd":
+                   geom_loss = calc_infocd(x_map, self.target) # <-- NEW
+                   
+                elif self.args.loss_func.lower() == "hypercd":
+                   geom_loss = calc_hypercd(x_map, self.target) # <-- NEW
+
+                else:
+                  raise ValueError(f"Unknown loss_func: {self.args.loss_func}")
+
                 # optional early stopping
-                if self.args.early_stopping:
-                    if cd_loss.item() < self.args.stop_cd:
-                        break
+                if self.args.early_stopping and geom_loss.item() < self.args.stop_cd:
+                  break
 
-                # nll corresponds to a negative log-likelihood loss
-                nll = self.z**2 / 2
-                nll = nll.mean()
+                # --- Other terms ---
+                nll = (self.z ** 2 / 2).mean()
 
-                ### loss
-                loss = ftr_loss * self.w_D_loss[stage] + nll * self.args.w_nll \
-                        + cd_loss * 1
+                # --- Total loss ---
+                loss = (
+                 ftr_loss * self.w_D_loss[stage]
+                 + nll * self.args.w_nll
+                 + geom_loss * 1
+                 )
+
+                
 
                 # optional to use directed_hausdorff
                 if self.args.directed_hausdorff:
@@ -297,6 +343,18 @@ class ShapeInversion(object):
                 self.z_optim.step()
                 if self.update_G_stages[stage]:
                     self.G.optim.step()
+            
+            # --- Save intermediate outputs every N iterations ---
+            save_interval = getattr(self.args, "save_interval", 10)
+            if (i + 1) % save_interval == 0:
+                inter_dir = self.args.save_inversion_path
+                os.makedirs(inter_dir, exist_ok=True)
+                inter_name = f"{self.pcd_id}_stage{stage}_iter{curr_step}.txt"
+                save_path = os.path.join(inter_dir, inter_name)
+    
+                np.savetxt(save_path, x[0].detach().cpu().numpy(), fmt="%f;%f;%f", delimiter=';')
+                print(f"[INFO] Saved intermediate reconstruction → {save_path}")
+
 
             # save checkpoint for each stage
             self.checkpoint_flags.append('s_' + str(stage) + ' x')
@@ -325,9 +383,23 @@ class ShapeInversion(object):
         self.x = x
         if not osp.isdir(self.args.save_inversion_path):
             os.mkdir(self.args.save_inversion_path)
+        # x_np = x[0].detach().cpu().numpy()
+        # x_map_np = x_map[0].detach().cpu().numpy()
+        # target_np = self.target[0].detach().cpu().numpy()
+        
         x_np = x[0].detach().cpu().numpy()
-        x_map_np = x_map[0].detach().cpu().numpy()
+        
+        # --- START MODIFICATION ---
+        # Use the initial shape saved earlier
+        if self.initial_shape_for_saving is not None:
+            x_map_np = self.initial_shape_for_saving[0].detach().cpu().numpy()
+        else:
+            # Fallback just in case, to avoid an error
+            x_map_np = x_map[0].detach().cpu().numpy()
+        # --- END MODIFICATION ---
+
         target_np = self.target[0].detach().cpu().numpy()
+
         if ith == -1:
             basename = str(self.pcd_id)
         else:
@@ -344,47 +416,270 @@ class ShapeInversion(object):
             self.jitter(self.target)
 
 
+    # def diversity_search(self, select_y=False):
+    #     """
+    #     produce batch by batch
+    #     search by 2pf and partial
+    #     but constrainted to z dimension are large
+    #     """
+    #     batch_size = 50
+
+    #     num_batch = int(self.select_num / batch_size)
+    #     x_ls = []
+    #     z_ls = []
+    #     cd_ls = []
+    #     tic = time.time()
+    #     with torch.no_grad():
+    #         for i in range(num_batch):
+    #             z = torch.randn(batch_size, 1, 96).cuda()
+    #             tree = [z]
+    #             x = self.G(tree)
+    #             dist1, dist2, _, _ = distChamfer(self.target.repeat(batch_size, 1, 1), x)
+    #             cd = dist1.mean(1)  # single directional CD
+
+    #             x_ls.append(x)
+    #             z_ls.append(z)
+    #             cd_ls.append(cd)
+
+    #     x_full = torch.cat(x_ls)
+    #     cd_full = torch.cat(cd_ls)
+    #     z_full = torch.cat(z_ls)
+
+    #     toc = time.time()
+
+    #     cd_candidates, idx = torch.topk(cd_full, self.args.n_z_candidates, largest=False)
+    #     z_t = z_full[idx].transpose(0, 1)
+    #     seeds = farthest_point_sample(z_t, self.args.n_outputs).squeeze(0)
+    #     z_ten = z_full[idx][seeds]
+
+    #     self.zs = [itm.unsqueeze(0) for itm in z_ten]
+    #     self.xs = []
+
     def diversity_search(self, select_y=False):
-        """
-        produce batch by batch
-        search by 2pf and partial
-        but constrainted to z dimension are large
-        """
-        batch_size = 50
+      """
+      Produce diverse latent candidates and select initial mapping shape
+      using chosen similarity metric (CD / EMD / DCD).
+      """
+      batch_size = 50
+      num_batch = int(self.select_num / batch_size)
 
-        num_batch = int(self.select_num / batch_size)
-        x_ls = []
-        z_ls = []
-        cd_ls = []
-        tic = time.time()
-        with torch.no_grad():
-            for i in range(num_batch):
-                z = torch.randn(batch_size, 1, 96).cuda()
-                tree = [z]
-                x = self.G(tree)
-                dist1, dist2, _, _ = distChamfer(self.target.repeat(batch_size, 1, 1), x)
-                cd = dist1.mean(1)  # single directional CD
+      x_ls, z_ls, dist_ls = [], [], []
+      tic = time.time()
 
-                x_ls.append(x)
-                z_ls.append(z)
-                cd_ls.append(cd)
+      with torch.no_grad():
+          for i in range(num_batch):
+              z = torch.randn(batch_size, 1, 96).to(self.device)
+              tree = [z]
+              x = self.G(tree)
 
-        x_full = torch.cat(x_ls)
-        cd_full = torch.cat(cd_ls)
-        z_full = torch.cat(z_ls)
+              # repeat target for batch comparison
+              target_rep = self.target.repeat(batch_size, 1, 1)
 
-        toc = time.time()
+              # === choose metric ===
+              metric = getattr(self.args, "mapping_metric", "cd").lower()
 
-        cd_candidates, idx = torch.topk(cd_full, self.args.n_z_candidates, largest=False)
-        z_t = z_full[idx].transpose(0, 1)
-        seeds = farthest_point_sample(z_t, self.args.n_outputs).squeeze(0)
-        z_ten = z_full[idx][seeds]
+              if metric == "cd":
+                  dist1, dist2, _, _ = distChamfer(target_rep, x)
+                  dist = dist1.mean(1)  # Chamfer Distance (1-direction)
+              elif metric == "emd":
+                  try:
+                      dist = torch.zeros(batch_size, device=self.device)
+                      from external.emd.emd_module import emdModule
+                      emd = emdModule()
+                      for j in range(batch_size):
+                          d, _ = emd(x[j:j+1], target_rep[j:j+1], 0.005, 300)
+                          dist[j] = torch.sqrt(d).mean()
+                  except Exception as e:
+                      print(f"[WARN] EMD selection failed, fallback to CD: {e}")
+                      dist1, dist2, _, _ = distChamfer(target_rep, x)
+                      dist = dist1.mean(1)
+              elif metric == "dcd":
+                  dist = torch.zeros(batch_size, device=self.device)
+                  for j in range(batch_size):
+                      dcd_loss = calc_dcd(x[j:j+1], target_rep[j:j+1], alpha=40)
+                      dist[j] = dcd_loss
+              
+              elif metric == "uniformcd":
+                  dist = torch.zeros(batch_size, device=self.device)
+                  for j in range(batch_size):
+                      ucd_loss = calc_uniform_chamfer_loss_tensor(x[j:j+1], target_rep[j:j+1])
+                      dist[j] = ucd_loss
 
-        self.zs = [itm.unsqueeze(0) for itm in z_ten]
-        self.xs = []
+              else:
+                  raise ValueError(f"Unknown mapping_metric: {metric}")
 
+              x_ls.append(x)
+              z_ls.append(z)
+              dist_ls.append(dist)
+
+      x_full = torch.cat(x_ls)
+      z_full = torch.cat(z_ls)
+      dist_full = torch.cat(dist_ls)
+
+      toc = time.time()
+      print(f"[INFO] Mapping selection done using {metric.upper()} (took {toc - tic:.2f}s)")
+
+      # choose best latent
+      best_idx = torch.argmin(dist_full)
+      self.z = z_full[best_idx].unsqueeze(0)
+      self.x_map_init = x_full[best_idx].unsqueeze(0)
+
+      # for visualization
+      self.checkpoint_flags.append(f"init_x_{metric}")
+      self.checkpoint_pcd.append(self.x_map_init)
+
+      return self.z
+  
+
+    # def select_z(self, select_y=False):
+    #     tic = time.time()
+    #     with torch.no_grad():
+    #         if self.select_num == 0:
+    #             self.z.zero_()
+    #             return
+    #         elif self.select_num == 1:
+    #             self.z.normal_()
+    #             return
+    #         z_all, y_all, loss_all = [], [], []
+    #         for i in range(self.select_num):
+    #             z = torch.randn(1, 1, 96).to(device)
+    #             tree = [z]
+    #             with torch.no_grad():
+    #                 x = self.G(tree)
+    #             ftr_loss = self.criterion(self.ftr_net, x, self.target)
+    #             z_all.append(z)
+    #             # store scalar loss, not array
+    #             loss_all.append(float(ftr_loss.detach().cpu().item()))
+
+    #         toc = time.time()
+    #         loss_all = np.array(loss_all)
+    #         idx = np.argmin(loss_all)
+
+    #         self.z.copy_(z_all[idx])
+    #         if select_y:
+    #             self.y.copy_(y_all[idx])
+
+    #         x = self.G([self.z])
+            
+    #         #storing the initial selected shape
+    #         self.initial_shape_for_saving = x.clone().detach()
+            
+    #         # visualization
+    #         if self.gt is not None:
+    #             x_map = self.pre_process(x, stage=-1)
+    #             dist1, dist2, _, _ = distChamfer(x, self.gt)
+    #             cd_loss = dist1.mean() + dist2.mean()
+
+    #             with open(self.args.log_pathname, "a") as file_object:
+    #                 msg = str(self.pcd_id) + ',' + 'init' + ',' + 'cd' + ',' + '{:6.5f}'.format(cd_loss.item())
+    #                 # print(msg)
+    #                 file_object.write(msg + '\n')
+    #             self.checkpoint_flags.append('init x')
+    #             self.checkpoint_pcd.append(x)
+    #             self.checkpoint_flags.append('init x_map')
+    #             self.checkpoint_pcd.append(x_map)
+    #         return z_all[idx]
+    
+    # def select_z(self, select_y=False):
+    #     tic = time.time()
+        
+    #     # --- (NEW) GET THE MAPPING METRIC ---
+    #     # Get the metric from your command, default to 'cd' if not specified
+    #     metric = getattr(self.args, "mapping_metric", "cd").lower()
+        
+    #     # --- (NEW) SET A WEIGHT FOR THE FEATURE LOSS ---
+    #     # This balances the "closeness" (geom_loss) with "realism" (ftr_loss).
+    #     # We use 0.1, similar to the main training loop's default.
+    #     w_feature = 0.1
+
+    #     print(f"[INFO] Using '{metric}' + 'feature' (w={w_feature}) for initial shape selection.")
+
+    #     with torch.no_grad():
+    #         if self.select_num == 0:
+    #             self.z.zero_()
+    #             return
+    #         elif self.select_num == 1:
+    #             self.z.normal_()
+    #             return
+                
+    #         z_all, y_all, loss_all = [], [], []
+            
+    #         for i in range(self.select_num):
+    #             z = torch.randn(1, 1, 96).to(device)
+    #             tree = [z]
+    #             with torch.no_grad():
+    #                 x = self.G(tree) # x has shape [1, N, 3]
+
+    #             # --- (NEW) CALCULATE BOTH LOSSES ---
+                
+    #             # 1. Calculate Feature Loss (for realism)
+    #             ftr_loss = self.criterion(self.ftr_net, x, self.target)
+
+    #             # 2. Calculate Geometric Loss (for closeness)
+    #             if metric == "cd":
+    #                 geom_loss = calc_cd(x, self.target) 
+    #             elif metric == "emd":
+    #                 geom_loss = calc_emd(x, self.target, eps=0.005, iterations=300)
+    #             elif metric == "dcd":
+    #                 geom_loss = calc_dcd(x, self.target, alpha=40)
+    #             elif metric == "uniformcd":
+    #                 geom_loss = calc_uniform_chamfer_loss_tensor(x, self.target)
+    #             elif metric == "feature": # Case where you *only* want feature loss
+    #                 geom_loss = 0.0
+    #                 w_feature = 1.0 # Use 100% feature loss
+    #             else:
+    #                 print(f"[WARN] Unknown mapping_metric '{metric}'. Defaulting to 'feature' loss only.")
+    #                 geom_loss = 0.0
+    #                 w_feature = 1.0
+
+    #             # 3. Combine them into a total loss
+    #             total_loss = geom_loss + (ftr_loss * w_feature)
+    #             # --- (END MODIFICATION) ---
+
+    #             z_all.append(z)
+    #             # store scalar loss, not array
+    #             loss_all.append(float(total_loss.detach().cpu().item()))
+
+    #         toc = time.time()
+    #         loss_all = np.array(loss_all)
+    #         idx = np.argmin(loss_all) # Find best *combined* loss
+
+    #         self.z.copy_(z_all[idx])
+    #         if select_y:
+    #             self.y.copy_(y_all[idx])
+
+    #         x = self.G([self.z])
+            
+    #         # This is our modification from before, it's still correct.
+    #         self.initial_shape_for_saving = x.clone().detach() 
+
+    #         # visualization
+    #         if self.gt is not None:
+    #             x_map = self.pre_process(x, stage=-1)
+    #             dist1, dist2, _, _ = distChamfer(x, self.gt)
+    #             cd_loss = dist1.mean() + dist2.mean()
+
+    #             with open(self.args.log_pathname, "a") as file_object:
+    #                 msg = str(self.pcd_id) + ',' + 'init' + ',' + 'cd' + ',' + '{:6.5f}'.format(cd_loss.item())
+    #                 file_object.write(msg + '\n')
+    #             self.checkpoint_flags.append('init x')
+    #             self.checkpoint_pcd.append(x)
+    #             self.checkpoint_flags.append('init x_map')
+    #             self.checkpoint_pcd.append(x_map)
+    #         return z_all[idx]
     def select_z(self, select_y=False):
         tic = time.time()
+        
+        # --- (NEW) GET THE MAPPING METRIC ---
+        # Get the metric from your command, default to 'cd' if not specified
+        metric = getattr(self.args, "mapping_metric", "cd").lower()
+        
+        # --- (NEW) SET A WEIGHT FOR THE FEATURE LOSS ---
+        # This balances the "closeness" (geom_loss) with "realism" (ftr_loss).
+        w_feature = 0.1
+
+        print(f"[INFO] Using '{metric}' + 'feature' (w={w_feature}) for initial shape selection.")
+
         with torch.no_grad():
             if self.select_num == 0:
                 self.z.zero_()
@@ -392,26 +687,61 @@ class ShapeInversion(object):
             elif self.select_num == 1:
                 self.z.normal_()
                 return
+                
             z_all, y_all, loss_all = [], [], []
+            
             for i in range(self.select_num):
                 z = torch.randn(1, 1, 96).to(device)
                 tree = [z]
                 with torch.no_grad():
-                    x = self.G(tree)
+                    x = self.G(tree) # x has shape [1, N, 3]
+
+                # --- CALCULATE BOTH LOSSES ---
+                
+                # 1. Calculate Feature Loss (for realism)
                 ftr_loss = self.criterion(self.ftr_net, x, self.target)
+
+                # 2. Calculate Geometric Loss (for closeness)
+                if metric == "cd":
+                    geom_loss = calc_cd(x, self.target) 
+                elif metric == "emd":
+                    geom_loss = calc_emd(x, self.target, eps=0.005, iterations=300)
+                elif metric == "dcd":
+                    geom_loss = calc_dcd(x, self.target, alpha=40)
+                elif metric == "uniformcd":
+                    geom_loss = calc_uniform_chamfer_loss_tensor(x, self.target)
+                elif metric == "infocd": # <-- NEW
+                    geom_loss = calc_infocd(x, self.target)
+                elif metric == "hypercd": # <-- NEW
+                    geom_loss = calc_hypercd(x, self.target)
+                elif metric == "feature": # Case where you *only* want feature loss
+                    geom_loss = 0.0
+                    w_feature = 1.0 
+                else:
+                    print(f"[WARN] Unknown mapping_metric '{metric}'. Defaulting to 'feature' loss only.")
+                    geom_loss = 0.0
+                    w_feature = 1.0
+
+                # 3. Combine them into a total loss
+                total_loss = geom_loss + (ftr_loss * w_feature)
+                # --- (END MODIFICATION) ---
+
                 z_all.append(z)
                 # store scalar loss, not array
-                loss_all.append(float(ftr_loss.detach().cpu().item()))
+                loss_all.append(float(total_loss.detach().cpu().item()))
 
             toc = time.time()
             loss_all = np.array(loss_all)
-            idx = np.argmin(loss_all)
+            idx = np.argmin(loss_all) # Find best *combined* loss
 
             self.z.copy_(z_all[idx])
             if select_y:
                 self.y.copy_(y_all[idx])
 
             x = self.G([self.z])
+            
+            # Storing the initial selected shape (for xmap plot)
+            self.initial_shape_for_saving = x.clone().detach() 
 
             # visualization
             if self.gt is not None:
@@ -421,7 +751,6 @@ class ShapeInversion(object):
 
                 with open(self.args.log_pathname, "a") as file_object:
                     msg = str(self.pcd_id) + ',' + 'init' + ',' + 'cd' + ',' + '{:6.5f}'.format(cd_loss.item())
-                    # print(msg)
                     file_object.write(msg + '\n')
                 self.checkpoint_flags.append('init x')
                 self.checkpoint_pcd.append(x)
