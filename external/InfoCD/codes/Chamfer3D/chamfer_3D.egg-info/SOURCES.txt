@@ -1,0 +1,9 @@
+setup.py
+/content/drive/.shortcut-targets-by-id/16f__gphJuULzS_II1RpM4SiRbDc-YM2Q/shape-inversion/external/InfoCD/codes/Chamfer3D/chamfer3D.cu
+/content/drive/.shortcut-targets-by-id/16f__gphJuULzS_II1RpM4SiRbDc-YM2Q/shape-inversion/external/InfoCD/codes/Chamfer3D/chamfer_cuda.cpp
+/content/drive/MyDrive/shape-inversion/external/InfoCD/codes/Chamfer3D/chamfer3D.cu
+/content/drive/MyDrive/shape-inversion/external/InfoCD/codes/Chamfer3D/chamfer_cuda.cpp
+chamfer_3D.egg-info/PKG-INFO
+chamfer_3D.egg-info/SOURCES.txt
+chamfer_3D.egg-info/dependency_links.txt
+chamfer_3D.egg-info/top_level.txt
