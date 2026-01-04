@@ -1,3 +1,7 @@
+import os
+import sys
+import torch
+# --- Patched by Colab ---
 import sys
 # sys.path.append('/content/drive/MyDrive/shape-inversion')
 #FOR KAGGLE
