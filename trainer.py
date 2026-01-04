@@ -1,22 +1,18 @@
-# ==========================================================
-# trainer.py (Kaggle-Compatible Version)
-# ==========================================================
-
 import sys
+# sys.path.append('/content/drive/MyDrive/shape-inversion')
+#FOR KAGGLE
+# --- KAGGLE PATH FIX ---
+# We check if the Kaggle data directory exists and add it to path so imports work.
+KAGGLE_DATA_ROOT = '/kaggle/input/data-shape-inversion'
+if os.path.exists(KAGGLE_DATA_ROOT):
+    sys.path.append(KAGGLE_DATA_ROOT)
+# -----------------------
+
 import os
 import time
 from collections import OrderedDict
 import random
-
-# -------------------------
-# Fix import paths for Kaggle
-# -------------------------
-repo_root = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(repo_root)
-sys.path.append(os.path.join(repo_root, "data"))
-sys.path.append(os.path.join(repo_root, "utils"))
-sys.path.append(os.path.join(repo_root, "model"))
-sys.path.append(os.path.join(repo_root, "external"))
+import numpy as np # Added for saving txt files
 
 import torch
 import torch.distributed as dist
@@ -24,11 +20,14 @@ import torch.optim
 import torchvision.utils as vutils
 from torch.utils.data import DataLoader, DistributedSampler
 
-# -------------------------
-# Project Imports
-# -------------------------
-from data.CRN_dataset import CRNShapeNet
-from data.ply_dataset import PlyDataset
+# Now we can import from data because we added the path above
+try:
+    from data.CRN_dataset import CRNShapeNet
+    from data.ply_dataset import PlyDataset
+except ImportError:
+    # Fallback or error if path isn't correct
+    pass
+
 from arguments import Arguments
 from utils.pc_transform import voxelize
 from utils.plot import draw_any_set
@@ -40,15 +39,9 @@ from shape_inversion import ShapeInversion
 from model.treegan_network import Generator, Discriminator
 from external.ChamferDistancePytorch.chamfer_python import distChamfer, distChamfer_raw
 
-
-# ==========================================================
-# Trainer Class
-# ==========================================================
 class Trainer(object):
     def __init__(self, args):
         self.args = args
-
-        # Setup distributed params
         if self.args.dist:
             self.rank = dist.get_rank()
             self.world_size = dist.get_world_size()
@@ -61,25 +54,26 @@ class Trainer(object):
         log_pathname = './logs/' + save_inversion_dirname[-1] + '.txt'
         args.log_pathname = log_pathname
 
-        # Ensure checkpoint attribute exists
+        # -------------------------
+        # Ensure checkpoint attribute exists for compatibility:
+        # if shape_inversion.py expects args.checkpoint, map from existing ckpt_load arg
+        # -------------------------
         if not hasattr(self.args, 'checkpoint'):
+            # prefer ckpt_load if present, otherwise None
             self.args.checkpoint = getattr(self.args, 'ckpt_load', None)
 
-        # Ensure args.device exists
+        # Ensure args.device is set (normally set in main before Trainer instantiation)
         if not hasattr(self.args, 'device'):
             self.args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # -------------------------
-        # Model creation
-        # -------------------------
+        # create model (ShapeInversion will use args.checkpoint or args.ckpt_load internally)
         self.model = ShapeInversion(self.args)
         if self.inversion_mode == 'morphing':
             self.model2 = ShapeInversion(self.args)
             self.model_interp = ShapeInversion(self.args)
 
-        # -------------------------
         # Dataset loader
-        # -------------------------
+        # Fix: Use valid dataset condition
         if self.args.dataset == 'ply':
             dataset = PlyDataset(self.args)
         else:
@@ -96,9 +90,6 @@ class Trainer(object):
                 dataset, batch_size=1, shuffle=False, sampler=sampler,
                 num_workers=1, pin_memory=False)
 
-    # ==========================================================
-    # Main run entry
-    # ==========================================================
     def run(self):
         if self.inversion_mode in ['reconstruction', 'completion', 'jittering', 'simulate_pfnet']:
             self.train()
@@ -109,14 +100,25 @@ class Trainer(object):
         else:
             raise NotImplementedError
 
-    # ==========================================================
-    # Training Modes
-    # ==========================================================
     def train(self):
+        """
+        Modified training loop that processes ONLY the user-specified sample IDs.
+        Change LIST_OF_IDS below whenever you want to re-run specific samples.
+        """
+
+        # ------------------------------------
+        # >>>> EDIT THIS LIST FOR YOUR SAMPLES <<<<
+        # Example: [924, 955, 988, 998, 1038]
+        # LIST_OF_IDS = [843, 863, 873, 815, 809]
+        LIST_OF_IDS=[1091]
+        # ------------------------------------
+
+        print("\n[INFO] Running selective inversion only for IDs:", LIST_OF_IDS, "\n")
+
         for i, data in enumerate(self.dataloader):
             tic = time.time()
 
-            # Dataset check
+            # Dataset unpack
             if self.args.dataset == 'ply':
                 partial, index = data
                 gt = None
@@ -124,6 +126,17 @@ class Trainer(object):
                 gt, partial, index = data
                 gt = gt.squeeze(0).to(self.args.device)
 
+            sample_id = index.item()
+
+            # ----------------------------------------------------
+            # SKIP everything except the samples you selected
+            # ----------------------------------------------------
+            if sample_id not in LIST_OF_IDS:
+                continue
+
+            print(f"\n>>> Processing SELECTED sample ID: {sample_id}\n")
+
+            # If PFNet simulation mode
             if self.args.inversion_mode == 'simulate_pfnet':
                 n_removal = 512
                 choice = [torch.Tensor([-1, 0, 0]), torch.Tensor([-1, 1, 0])]
@@ -133,8 +146,11 @@ class Trainer(object):
                 partial = gt[idx]
 
             partial = partial.squeeze(0).to(self.args.device)
-            self.model.reset_G(pcd_id=index.item())
 
+            # Reset inversion model for new sample
+            self.model.reset_G(pcd_id=sample_id)
+
+            # Set targets
             if partial is None or self.args.inversion_mode in [
                 'reconstruction', 'jittering', 'morphing', 'ball_hole', 'knn_hole'
             ]:
@@ -142,25 +158,73 @@ class Trainer(object):
             else:
                 self.model.set_target(gt=gt, partial=partial)
 
+            # Latent selection + optimization
             self.model.select_z(select_y=False)
             self.model.run()
 
             toc = time.time()
-            if self.rank == 0:
-                print(i, 'out of', len(self.dataloader), 'done in', int(toc - tic), 's')
+            print(f"[DONE] Sample {sample_id} finished in {int(toc - tic)} seconds.")
 
+            # Visualization
             if self.args.visualize:
                 pcd_list = self.model.checkpoint_pcd
                 flag_list = self.model.checkpoint_flags
                 output_dir = self.args.save_inversion_path + '_visual'
-                output_stem = str(index.item())
+                output_stem = str(sample_id)
+
                 if self.args.inversion_mode == 'jittering':
                     draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(4, 10))
                 else:
                     draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(3, 4))
 
-        print('<<<<<<<<<<<< rank', self.rank, 'completed >>>>>>>>>>>>>>')
+        print("\n<<<<<<<<<<<<<<< ALL SELECTED SAMPLES COMPLETED >>>>>>>>>>>>>>>\n")
 
+# def train(self)
+    #     for i, data in enumerate(self.dataloader):
+    #         tic = time.time()
+    #         # Dataset check
+    #         if self.args.dataset == 'ply':
+    #             partial, index = data
+    #             gt = None
+    #         else:
+    #             gt, partial, index = data
+    #             gt = gt.squeeze(0).to(self.args.device)
+
+    #         if self.args.inversion_mode == 'simulate_pfnet':
+    #             n_removal = 512
+    #             choice = [torch.Tensor([-1, 0, 0]), torch.Tensor([-1, 1, 0])]
+    #             chosen = random.sample(choice, 1)[0]
+    #             dist_val = torch.norm(gt.add(-chosen.to(self.args.device)), dim=1)
+    #             top_dist, idx = torch.topk(dist_val, k=2048-n_removal)
+    #             partial = gt[idx]
+
+    #         partial = partial.squeeze(0).to(self.args.device)
+    #         self.model.reset_G(pcd_id=index.item())
+
+    #         # set target and complete shape
+    #         if partial is None or self.args.inversion_mode in ['reconstruction', 'jittering', 'morphing', 'ball_hole', 'knn_hole']:
+    #             self.model.set_target(gt=gt)
+    #         else:
+    #             self.model.set_target(gt=gt, partial=partial)
+
+    #         self.model.select_z(select_y=False)
+    #         self.model.run()
+    #         toc = time.time()
+    #         if self.rank == 0:
+    #             print(i, 'out of', len(self.dataloader), 'done in', int(toc-tic), 's')
+            
+    #         if self.args.visualize:
+    #             pcd_list = self.model.checkpoint_pcd
+    #             flag_list = self.model.checkpoint_flags
+    #             output_dir = self.args.save_inversion_path + '_visual'
+    #             output_stem = str(index.item())
+    #             if self.args.inversion_mode == 'jittering':
+    #                 draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(4, 10))
+    #             else:
+    #                 draw_any_set(flag_list, pcd_list, output_dir, output_stem, layout=(3, 4))
+    
+    #     print('<<<<<<<<<<<<<<<<<<<<<<<<<<<<,rank', self.rank, 'completed>>>>>>>>>>>>>>>>>>>>>>')
+        
 
     def train_diversity(self):
         for i, data in enumerate(self.dataloader):
@@ -195,7 +259,7 @@ class Trainer(object):
                 print(index.item(), 'partial shape', partial.shape)
             else:
                 partial = partial.squeeze(0).to(self.args.device)
-
+            
             self.model.reset_G(pcd_id=index.item())
             self.model.set_target(gt=gt, partial=partial)
             self.model.diversity_search()
@@ -223,9 +287,8 @@ class Trainer(object):
                 draw_any_set(flag_ls, pcd_ls, output_dir, output_stem, layout=layout)
             if self.rank == 0:
                 toc = time.time()
-                print(i, 'out of', len(self.dataloader), 'done in', int(toc - tic), 's')
+                print(i, 'out of', len(self.dataloader), 'done in', int(toc-tic), 's')
             print(f"{i} / {len(self.dataloader)} completed")
-
 
     def train_morphing(self):
         for i, data in enumerate(self.dataloader):
@@ -233,7 +296,7 @@ class Trainer(object):
             gt, partial, index = data
             gt = gt.to(self.args.device)
 
-            # Reconstruction on both pcs
+            # Reconstruction on both pcs, assuming gt is a batch of two shapes
             self.model.reset_G(pcd_id=index[0].item())
             self.model.set_target(gt=gt[0])
             self.model.select_z(select_y=False)
@@ -278,23 +341,16 @@ class Trainer(object):
 
             if self.rank == 0:
                 toc = time.time()
-                print(i, 'out of', len(self.dataloader), 'done in', int(toc - tic), 's')
+                print(i, 'out of', len(self.dataloader), 'done in', int(toc-tic), 's')
 
-
-# ==========================================================
-# Main Entry Point
-# ==========================================================
 if __name__ == "__main__":
     args = Arguments(stage='inversion').parser().parse_args()
     args.device = torch.device('cuda:' + str(args.gpu) if args.gpu != -1 and torch.cuda.is_available() else 'cpu')
-
     if not os.path.isdir('./logs/'):
         os.mkdir('./logs/')
     if not os.path.isdir('./saved_results'):
         os.mkdir('./saved_results')
-
     if args.dist:
         dist_init(args.port)
-
     trainer = Trainer(args)
     trainer.run()
